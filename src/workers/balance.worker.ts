@@ -12,6 +12,7 @@ import {
   replaceIndicators,
   saveRun,
 } from '../db';
+import { persistObservedSeries } from '../services/seriesService';
 import { nowISO } from '../lib/time';
 
 export interface WorkerRunRequest {
@@ -89,11 +90,14 @@ self.onmessage = async (ev: MessageEvent<WorkerRunRequest>) => {
       await replaceFacts(runId, facts);
       await replaceIndicators(runId, indicators);
     }
+    // 指标运行同时保存连续水位/流量序列，供规则曲线穿越与敏感区间分析复用，
+    // 不直接读取“最新文件”。
+    const seriesCount = await persistObservedSeries(snapshot, run.gridStepSeconds);
     await saveRun({
       ...run,
       status: warnings.length > 0 || pendingCount > 0 ? 'completed_with_warnings' : 'completed',
       finishedAt: nowISO(),
-      warnings,
+      warnings: [...warnings, ...(seriesCount > 0 ? [`已保存连续观测序列 ${seriesCount} 条，供越线分析回查`] : [])],
       stats: {
         factCount: facts.length,
         pendingCount,

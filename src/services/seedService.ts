@@ -9,6 +9,7 @@ import {
   putRainZone,
   putReservoir,
   putRule,
+  putRuleCurve,
   putSourceFile,
   getSourceFiles,
 } from '../db';
@@ -20,7 +21,7 @@ export async function isSeeded(): Promise<boolean> {
   return (await getAllReadings()).length > 0;
 }
 
-export async function seedDemoData(): Promise<{ readings: number; curves: number; rules: number }> {
+export async function seedDemoData(): Promise<{ readings: number; curves: number; rules: number; ruleCurves: number }> {
   const data = buildDemoDataset();
   await clearAllData();
   for (const z of data.zones) await putRainZone(z);
@@ -28,6 +29,7 @@ export async function seedDemoData(): Promise<{ readings: number; curves: number
   for (const r of data.reservoirs) await putReservoir(r);
   for (const c of data.curves) await putCurve(c);
   for (const rule of data.rules) await putRule(rule);
+  for (const rc of data.ruleCurves) await putRuleCurve(rc);
   const file: SourceFileRecord = {
     id: 'seed-bundle',
     fileName: '演示数据集（内置播种）',
@@ -39,7 +41,7 @@ export async function seedDemoData(): Promise<{ readings: number; curves: number
   };
   const res = await importReadings(data.readings, file);
   for (const f of data.files) await putSourceFile(f);
-  return { readings: res.imported, curves: data.curves.length, rules: data.rules.length };
+  return { readings: res.imported, curves: data.curves.length, rules: data.rules.length, ruleCurves: data.ruleCurves.length };
 }
 
 // ---------- CSV 接入 --------

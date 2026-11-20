@@ -3,12 +3,15 @@ import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import type {
   Annotation,
   BalanceFact,
+  CrossingAnalysisRecord,
   CurveVersion,
   DispatchRule,
+  ObservedSeries,
   RawReading,
   Reservoir,
   ReservoirIndicator,
   BalanceRun,
+  RuleCurve,
   RunSnapshot,
   SourceFileRecord,
   RainZone,
@@ -16,7 +19,7 @@ import type {
 } from './types';
 
 export const DB_NAME = 'flood-dispatch-db';
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
 
 interface FloodDB extends DBSchema {
   raw_readings: {
@@ -41,6 +44,20 @@ interface FloodDB extends DBSchema {
     indexes: { by_run: string; by_run_reservoir: [string, string] };
   };
   indicators: { key: string; value: ReservoirIndicator; indexes: { by_run: string } };
+  /** 预警规则曲线目录（流域 + 等级 + 有效期 + 曲线点 + 审批） */
+  rule_curves: {
+    key: string;
+    value: RuleCurve;
+    indexes: { by_basin: string; by_basin_level: [string, string] };
+  };
+  /** 指标运行保存的连续水位/流量序列 */
+  series: { key: string; value: ObservedSeries; indexes: { by_run: string; by_run_reservoir: [string, string] } };
+  /** 已发布的越线分析（冻结观测序列与规则引用） */
+  crossing_analyses: {
+    key: string;
+    value: CrossingAnalysisRecord;
+    indexes: { by_run: string; by_reservoir: string };
+  };
   annotations: {
     key: string;
     value: Annotation;
@@ -55,27 +72,55 @@ export function getDB(): Promise<IDBPDatabase<FloodDB>> {
   if (!dbPromise) {
     dbPromise = openDB<FloodDB>(DB_NAME, DB_VERSION, {
       upgrade(db) {
-        const readings = db.createObjectStore('raw_readings', { keyPath: 'id' });
-        readings.createIndex('by_kind', 'kind');
-        readings.createIndex('by_reservoir', 'reservoirId');
-        readings.createIndex('by_sampled', 'sampledAt');
-        db.createObjectStore('reservoirs', { keyPath: 'id' });
-        db.createObjectStore('rain_zones', { keyPath: 'id' });
-        db.createObjectStore('rain_stations', { keyPath: 'id' });
-        const curves = db.createObjectStore('curves', { keyPath: 'id' });
-        curves.createIndex('by_reservoir_kind', ['reservoirId', 'kind']);
-        const rules = db.createObjectStore('rules', { keyPath: 'id' });
-        rules.createIndex('by_reservoir', 'reservoirId');
-        db.createObjectStore('runs', { keyPath: 'id' });
-        db.createObjectStore('snapshots', { keyPath: 'runId' });
-        const facts = db.createObjectStore('facts', { keyPath: 'id' });
-        facts.createIndex('by_run', 'runId');
-        facts.createIndex('by_run_reservoir', ['runId', 'reservoirId']);
-        const indicators = db.createObjectStore('indicators', { keyPath: 'id' });
-        indicators.createIndex('by_run', 'runId');
-        const annotations = db.createObjectStore('annotations', { keyPath: 'id' });
-        annotations.createIndex('by_subject', ['subjectType', 'subjectId']);
-        db.createObjectStore('source_files', { keyPath: 'id' });
+        // v1 -> v2 只新增存储，不清空既有治理数据
+        if (!db.objectStoreNames.contains('raw_readings')) {
+          const readings = db.createObjectStore('raw_readings', { keyPath: 'id' });
+          readings.createIndex('by_kind', 'kind');
+          readings.createIndex('by_reservoir', 'reservoirId');
+          readings.createIndex('by_sampled', 'sampledAt');
+        }
+        if (!db.objectStoreNames.contains('reservoirs')) db.createObjectStore('reservoirs', { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('rain_zones')) db.createObjectStore('rain_zones', { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('rain_stations')) db.createObjectStore('rain_stations', { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('curves')) {
+          const curves = db.createObjectStore('curves', { keyPath: 'id' });
+          curves.createIndex('by_reservoir_kind', ['reservoirId', 'kind']);
+        }
+        if (!db.objectStoreNames.contains('rules')) {
+          const rules = db.createObjectStore('rules', { keyPath: 'id' });
+          rules.createIndex('by_reservoir', 'reservoirId');
+        }
+        if (!db.objectStoreNames.contains('runs')) db.createObjectStore('runs', { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('snapshots')) db.createObjectStore('snapshots', { keyPath: 'runId' });
+        if (!db.objectStoreNames.contains('facts')) {
+          const facts = db.createObjectStore('facts', { keyPath: 'id' });
+          facts.createIndex('by_run', 'runId');
+          facts.createIndex('by_run_reservoir', ['runId', 'reservoirId']);
+        }
+        if (!db.objectStoreNames.contains('indicators')) {
+          const indicators = db.createObjectStore('indicators', { keyPath: 'id' });
+          indicators.createIndex('by_run', 'runId');
+        }
+        if (!db.objectStoreNames.contains('annotations')) {
+          const annotations = db.createObjectStore('annotations', { keyPath: 'id' });
+          annotations.createIndex('by_subject', ['subjectType', 'subjectId']);
+        }
+        if (!db.objectStoreNames.contains('source_files')) db.createObjectStore('source_files', { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('rule_curves')) {
+          const ruleCurves = db.createObjectStore('rule_curves', { keyPath: 'id' });
+          ruleCurves.createIndex('by_basin', 'basinId');
+          ruleCurves.createIndex('by_basin_level', ['basinId', 'warningLevel']);
+        }
+        if (!db.objectStoreNames.contains('series')) {
+          const series = db.createObjectStore('series', { keyPath: 'id' });
+          series.createIndex('by_run', 'runId');
+          series.createIndex('by_run_reservoir', ['runId', 'reservoirId']);
+        }
+        if (!db.objectStoreNames.contains('crossing_analyses')) {
+          const analyses = db.createObjectStore('crossing_analyses', { keyPath: 'id' });
+          analyses.createIndex('by_run', 'runId');
+          analyses.createIndex('by_reservoir', 'reservoirId');
+        }
       },
     });
   }
@@ -161,6 +206,38 @@ export async function putRule(r: DispatchRule): Promise<void> {
 }
 export async function getAllRules(): Promise<DispatchRule[]> {
   return (await getDB()).getAll('rules');
+}
+
+// ---------- 预警规则曲线 / 观测序列 / 越线分析 ----------
+
+export async function putRuleCurve(rc: RuleCurve): Promise<void> {
+  await (await getDB()).put('rule_curves', rc);
+}
+export async function getAllRuleCurves(): Promise<RuleCurve[]> {
+  return (await getDB()).getAll('rule_curves');
+}
+export async function getRuleCurve(id: string): Promise<RuleCurve | undefined> {
+  return (await getDB()).get('rule_curves', id);
+}
+
+export async function saveSeries(series: ObservedSeries): Promise<void> {
+  await (await getDB()).put('series', series);
+}
+export async function getSeriesForRun(runId: string): Promise<ObservedSeries[]> {
+  return (await getDB()).getAllFromIndex('series', 'by_run', runId);
+}
+export async function getAllSeries(): Promise<ObservedSeries[]> {
+  return (await getDB()).getAll('series');
+}
+
+export async function saveCrossingAnalysis(record: CrossingAnalysisRecord): Promise<void> {
+  await (await getDB()).put('crossing_analyses', record);
+}
+export async function getAllCrossingAnalyses(): Promise<CrossingAnalysisRecord[]> {
+  return (await getDB()).getAll('crossing_analyses');
+}
+export async function getCrossingAnalysis(id: string): Promise<CrossingAnalysisRecord | undefined> {
+  return (await getDB()).get('crossing_analyses', id);
 }
 
 // ---------- 运行 / 快照 / 事实 / 指标 ----------
@@ -317,6 +394,7 @@ export async function clearAllData(): Promise<void> {
   const stores = [
     'raw_readings', 'reservoirs', 'rain_zones', 'rain_stations', 'curves', 'rules',
     'runs', 'snapshots', 'facts', 'indicators', 'annotations', 'source_files',
+    'rule_curves', 'series', 'crossing_analyses',
   ] as const;
   const tx = db.transaction([...stores], 'readwrite');
   await Promise.all(stores.map((s) => tx.objectStore(s).clear()));

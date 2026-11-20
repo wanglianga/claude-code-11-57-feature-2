@@ -5,12 +5,14 @@ import CatalogPage from './pages/CatalogPage';
 import RunsPage from './pages/RunsPage';
 import DashboardPage from './pages/DashboardPage';
 import ReviewPage from './pages/ReviewPage';
+import CrossingPage from './pages/CrossingPage';
 
 const NAV = [
   { to: '/ingest', label: '资料接入' },
   { to: '/catalog', label: '曲线与规则目录' },
   { to: '/runs', label: '平衡运行台' },
   { to: '/dashboard', label: '调度看板' },
+  { to: '/crossing', label: '规则越线分析' },
   { to: '/review', label: '复盘回查' },
 ];
 
@@ -35,6 +37,7 @@ export default function App() {
             <Route path="/catalog" element={<CatalogPage />} />
             <Route path="/runs" element={<RunsPage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/crossing" element={<CrossingPage />} />
             <Route path="/review" element={<ReviewPage />} />
           </Routes>
         </main>

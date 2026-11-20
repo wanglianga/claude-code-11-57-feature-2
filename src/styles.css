@@ -154,3 +154,11 @@ label.field input, label.field select { margin-top: 4px; }
 .divider { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
 details summary { cursor: pointer; font-weight: 600; margin-bottom: 8px; }
 .code-block { background: #0f2747; color: #d7e3f6; padding: 12px; border-radius: 8px; font-family: var(--mono); font-size: 12px; overflow: auto; max-height: 320px; }
+
+/* 越线分析：规则曲线/情景说明的可读性 */
+.crossing-legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); margin: 8px 0; }
+.crossing-legend span::before { content: ''; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: middle; background: currentColor; }
+.crossing-legend .lv-blue { color: #1d4ed8; }
+.crossing-legend .lv-yellow { color: #b45309; }
+.crossing-legend .lv-orange { color: #c2410c; }
+.crossing-legend .lv-red { color: #b91c1c; }

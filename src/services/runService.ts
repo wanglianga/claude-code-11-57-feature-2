@@ -5,6 +5,7 @@ import {
   getAllRainZones,
   getAllReadings,
   getAllReservoirs,
+  getAllRuleCurves,
   getAllRules,
   getReadingsForCutoff,
   saveRun,
@@ -69,11 +70,12 @@ export async function createRun(params: CreateRunParams): Promise<BalanceRun> {
   };
 
   // 锁定快照：截止点之后到达的读数一律不进本运行（迟到雨量在截止点后即被排除）
-  const [allReservoirs, zones, curves, rules] = await Promise.all([
+  const [allReservoirs, zones, curves, rules, ruleCurves] = await Promise.all([
     getAllReservoirs(),
     getAllRainZones(),
     getAllCurves(),
     getAllRules(),
+    getAllRuleCurves(),
   ]);
   const readings = await getReadingsForCutoff(params.cutoffAt);
   const totalReadings = await getAllReadings();
@@ -84,6 +86,7 @@ export async function createRun(params: CreateRunParams): Promise<BalanceRun> {
     readings,
     curves,
     rules,
+    ruleCurves,
     reservoirs: allReservoirs.filter((r) => params.reservoirIds.includes(r.id)),
     zones,
     frozenAt: nowISO(),

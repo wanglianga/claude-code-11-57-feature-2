@@ -13,6 +13,7 @@ import type {
   RainZone,
   RawReading,
   Reservoir,
+  RuleCurve,
   SourceFileRecord,
 } from '../types';
 
@@ -28,6 +29,7 @@ export interface DemoDataset {
   stations: RainStation[];
   curves: CurveVersion[];
   rules: DispatchRule[];
+  ruleCurves: RuleCurve[];
   readings: RawReading[];
   files: SourceFileRecord[];
 }
@@ -135,10 +137,10 @@ export function buildDemoDataset(): DemoDataset {
     { id: 'st2', name: '平原雨量站', zoneId: 'z2', lon: 118.95, lat: 30.05 },
   ];
   const reservoirs: Reservoir[] = [
-    { id: 'qx', name: '青溪河水库', lon: 118.78, lat: 30.18, rainWeights: [{ zoneId: 'z1', weight: 0.6 }, { zoneId: 'z2', weight: 0.4 }] },
-    { id: 'bs', name: '白沙河水库', lon: 119.05, lat: 30.12, rainWeights: [{ zoneId: 'z1', weight: 0.5 }, { zoneId: 'z2', weight: 0.5 }] },
-    { id: 'df', name: '东风水库', lon: 118.5, lat: 29.92, rainWeights: [{ zoneId: 'z1', weight: 1 }] },
-    { id: 'xl', name: '西岭水库', lon: 119.2, lat: 30.3, rainWeights: [{ zoneId: 'z2', weight: 1 }] },
+    { id: 'qx', name: '青溪河水库', lon: 118.78, lat: 30.18, basinId: 'qingxi', rainWeights: [{ zoneId: 'z1', weight: 0.6 }, { zoneId: 'z2', weight: 0.4 }] },
+    { id: 'bs', name: '白沙河水库', lon: 119.05, lat: 30.12, basinId: 'baisha', rainWeights: [{ zoneId: 'z1', weight: 0.5 }, { zoneId: 'z2', weight: 0.5 }] },
+    { id: 'df', name: '东风水库', lon: 118.5, lat: 29.92, basinId: 'qingxi', rainWeights: [{ zoneId: 'z1', weight: 1 }] },
+    { id: 'xl', name: '西岭水库', lon: 119.2, lat: 30.3, basinId: 'xiling', rainWeights: [{ zoneId: 'z2', weight: 1 }] },
   ];
 
   // ---------- 曲线 ----------
@@ -226,6 +228,119 @@ export function buildDemoDataset(): DemoDataset {
     },
   ];
 
+  // ---------- 预警规则曲线（越线分析样例） ----------
+  //  qx：蓝色→橙色等级切换，两条规则线和下游安全流量都不同；另含橙色并发草案 A/B
+  //  bs：阶梯曲线，03:00 阈值由 85 降到 75，穿越由阈值阶跃而非观测变化造成
+  //  df：连续水位曲线、小时级观测且无闸门操作 -> 建议连续插值取精确时刻
+  //  xl：低频水位（3 小时/次）+ 同等级已审批规则适用期重叠（不自动选取）+ 已停用规则
+  const qxBlueLevel: RuleCurve = {
+    id: 'rc-qx-lv-blue', basinId: 'qingxi', basinName: '青溪河流域', reservoirId: 'qx',
+    warningLevel: 'blue', version: 'QX-LV-BLUE-2026', metric: 'water_level', unit: 'm',
+    validFrom: '2026-06-01T00:00:00.000Z', approvalStatus: 'approved', approvedBy: '防办-郑',
+    approvedAt: '2026-05-28T00:00:00.000Z', curveSemantics: 'linear',
+    curvePoints: [
+      { t: '2026-07-14T00:00:00.000Z', threshold: 105.6 },
+      { t: '2026-07-20T00:00:00.000Z', threshold: 105.6 },
+    ],
+    downstreamSafeFlow: [40, 120], note: '蓝色等级规则线',
+  };
+  const qxOrangeLevel: RuleCurve = {
+    id: 'rc-qx-lv-orange', basinId: 'qingxi', basinName: '青溪河流域', reservoirId: 'qx',
+    warningLevel: 'orange', version: 'QX-LV-ORANGE-2026', metric: 'water_level', unit: 'm',
+    validFrom: '2026-06-01T00:00:00.000Z', approvalStatus: 'approved', approvedBy: '防办-郑',
+    approvedAt: '2026-05-28T00:00:00.000Z', curveSemantics: 'linear',
+    curvePoints: [
+      { t: '2026-07-14T00:00:00.000Z', threshold: 106.4 },
+      { t: '2026-07-20T00:00:00.000Z', threshold: 106.4 },
+    ],
+    downstreamSafeFlow: [30, 90], note: '橙色等级规则线与下游安全流量均不同于蓝色',
+  };
+  const qxOrangeDraftA: RuleCurve = {
+    id: 'rc-qx-lv-orange-draft-a', basinId: 'qingxi', basinName: '青溪河流域', reservoirId: 'qx',
+    warningLevel: 'orange', version: 'QX-LV-ORANGE-2027-A(草案)', metric: 'water_level', unit: 'm',
+    validFrom: '2026-06-01T00:00:00.000Z', approvalStatus: 'draft', curveSemantics: 'linear',
+    curvePoints: [
+      { t: '2026-07-14T00:00:00.000Z', threshold: 106.2 },
+      { t: '2026-07-20T00:00:00.000Z', threshold: 106.2 },
+    ],
+    downstreamSafeFlow: [35, 95], note: '并发草案 A：阈值 106.2，拟随 2027 修订发布',
+  };
+  const qxOrangeDraftB: RuleCurve = {
+    id: 'rc-qx-lv-orange-draft-b', basinId: 'qingxi', basinName: '青溪河流域', reservoirId: 'qx',
+    warningLevel: 'orange', version: 'QX-LV-ORANGE-2027-B(草案)', metric: 'water_level', unit: 'm',
+    validFrom: '2026-06-01T00:00:00.000Z', approvalStatus: 'draft', curveSemantics: 'linear',
+    curvePoints: [
+      { t: '2026-07-14T00:00:00.000Z', threshold: 106.6 },
+      { t: '2026-07-20T00:00:00.000Z', threshold: 106.6 },
+    ],
+    downstreamSafeFlow: [25, 85], note: '并发草案 B：阈值 106.6，与草案 A 互不替代，分析须分别绑定',
+  };
+  const bsOrangeStep: RuleCurve = {
+    id: 'rc-bs-flow-orange-step', basinId: 'baisha', basinName: '白沙河流域', reservoirId: 'bs',
+    warningLevel: 'orange', version: 'BS-FLOW-ORANGE-2026', metric: 'flow', unit: 'm3/s',
+    validFrom: '2026-06-01T00:00:00.000Z', approvalStatus: 'approved', approvedBy: '防办-周',
+    approvedAt: '2026-05-30T00:00:00.000Z', curveSemantics: 'step',
+    curvePoints: [
+      { t: '2026-07-14T00:00:00.000Z', threshold: 85 },
+      { t: '2026-07-15T03:00:00.000Z', threshold: 75 },
+    ],
+    downstreamSafeFlow: [20, 90], note: '阶梯规则：03:00 起阈值下调 10 m³/s（含闸门调度令），越线由阈值阶跃造成',
+  };
+  const dfBlueLevel: RuleCurve = {
+    id: 'rc-df-lv-blue', basinId: 'qingxi', basinName: '青溪河流域', reservoirId: 'df',
+    warningLevel: 'blue', version: 'DF-LV-BLUE-2026', metric: 'water_level', unit: 'm',
+    validFrom: '2026-07-01T00:00:00.000Z', approvalStatus: 'approved', approvedBy: '防办-吴',
+    approvedAt: '2026-06-25T00:00:00.000Z', curveSemantics: 'linear',
+    curvePoints: [
+      { t: '2026-07-09T00:00:00.000Z', threshold: 101.5 },
+      { t: '2026-07-16T00:00:00.000Z', threshold: 101.5 },
+    ],
+    downstreamSafeFlow: [50, 300], note: '小时级水位、无闸门操作，适合连续插值取精确穿越时刻',
+  };
+  const xlBlueA: RuleCurve = {
+    id: 'rc-xl-lv-blue-a', basinId: 'xiling', basinName: '西岭流域', reservoirId: 'xl',
+    warningLevel: 'blue', version: 'XL-LV-A', metric: 'water_level', unit: 'm',
+    validFrom: '2026-06-01T00:00:00.000Z', approvalStatus: 'approved', approvedBy: '防办-郑',
+    approvedAt: '2026-05-30T00:00:00.000Z', curveSemantics: 'linear',
+    curvePoints: [
+      { t: '2026-06-01T00:00:00.000Z', threshold: 95.2 },
+      { t: '2026-07-20T00:00:00.000Z', threshold: 95.2 },
+    ],
+    downstreamSafeFlow: [12, 42], note: '低频人工水位样例；与 XL-LV-B 适用期重叠',
+  };
+  const xlBlueB: RuleCurve = {
+    id: 'rc-xl-lv-blue-b', basinId: 'xiling', basinName: '西岭流域', reservoirId: 'xl',
+    warningLevel: 'blue', version: 'XL-LV-B', metric: 'water_level', unit: 'm',
+    validFrom: '2026-07-01T00:00:00.000Z', approvalStatus: 'approved', approvedBy: '防办-郑',
+    approvedAt: '2026-06-28T00:00:00.000Z', curveSemantics: 'linear',
+    curvePoints: [
+      { t: '2026-07-01T00:00:00.000Z', threshold: 95.25 },
+      { t: '2026-07-20T00:00:00.000Z', threshold: 95.25 },
+    ],
+    downstreamSafeFlow: [12, 40], note: '与 XL-LV-A 适用期重叠，越线分析不自动选取，须显式绑定',
+  };
+  const xlYellowRetired: RuleCurve = {
+    id: 'rc-xl-lv-yellow-retired', basinId: 'xiling', basinName: '西岭流域', reservoirId: 'xl',
+    warningLevel: 'yellow', version: 'XL-LV-YELLOW-2025', metric: 'water_level', unit: 'm',
+    validFrom: '2025-06-01T00:00:00.000Z', validTo: '2026-06-01T00:00:00.000Z',
+    approvalStatus: 'retired', approvedBy: '防办-郑', approvedAt: '2025-05-30T00:00:00.000Z',
+    retiredAt: '2026-06-02T00:00:00.000Z', curveSemantics: 'linear',
+    curvePoints: [
+      { t: '2025-06-01T00:00:00.000Z', threshold: 95.25 },
+      { t: '2026-06-01T00:00:00.000Z', threshold: 95.25 },
+    ],
+    downstreamSafeFlow: [10, 40], note: '已停用规则：仅用于核对“撤回后已发布记录仍保留当时引用”',
+  };
+  const ruleCurves: RuleCurve[] = [
+    qxBlueLevel, qxOrangeLevel, qxOrangeDraftA, qxOrangeDraftB,
+    bsOrangeStep, dfBlueLevel, xlBlueA, xlBlueB, xlYellowRetired,
+  ];
+
+  // ---------- 低频人工水位（越线分析：低频 + 规则适用期重叠样例） ----------
+  for (let h = 0; h <= 6; h += 3) {
+    readings.push(levelReading('xl', hour(h), 95 + h * 0.05, { quality: 'confirmed', sourceFile: 'xl-manual-level.csv', note: '人工水尺低频观测（3 小时/次）' }));
+  }
+
   // ---------- 青溪河：6 个闭合小时区间 + 一处疑似水位偏差 ----------
   const QX_AREA = 5e6;
   for (let h = 0; h < 6; h += 1) {
@@ -301,6 +416,12 @@ export function buildDemoDataset(): DemoDataset {
     readings.push(flowReading('bs', 'diversion_out', hour(h), 10, 'confirmed', { sourceFile: 'diversion.csv' }));
     if (h < 6) readings.push(evapReading('bs', hour(h), hour(h + 1), 0.2));
   }
+  // 白沙河 03:00 闸门调度令（04:00 断面故障，故只到 03:00）：阶梯规则 03:00 阈值由 85 降到 75，
+  // 用于验证“越线由阈值阶跃而非观测变化造成”
+  for (let h = 0; h <= 3; h += 1) {
+    readings.push(flowReading('bs', 'gate_opening', hour(h), h < 3 ? 1.2 : 2.0, 'confirmed', { unit: 'm', sourceFile: 'bs-gate.csv', note: '1号孔闸门开度' }));
+    readings.push(flowReading('bs', 'gate_order', hour(h), h < 3 ? 1.2 : 2.0, 'confirmed', { unit: 'm', sourceFile: 'bs-gate-order.csv', note: '防办调度令：03:00 加开闸门' }));
+  }
   // 白沙河直接复用全局 z1/z2 分区雨量（权重各 0.5），不重复生成
   // 反推水位，03:00 前后按不同曲线斜率换算
   let bsStorage = 6.4e6; // 起始水位 108m，v1 曲线蓄水 6.4e6 m³
@@ -321,10 +442,10 @@ export function buildDemoDataset(): DemoDataset {
   bsLevels.forEach((lv, h) => readings.push(levelReading('bs', hour(h), lv)));
 
   // ---------- 西岭：最小数据，曲线无效 + 规则重叠 ----------
+  // 水位仅 3 小时一次人工水尺观测（低频样例），流量仍为小时级
   for (let h = 0; h <= 6; h += 1) {
     readings.push(flowReading('xl', 'inflow', hour(h), 15));
     readings.push(flowReading('xl', 'outflow', hour(h), 12));
-    readings.push(levelReading('xl', hour(h), 95 + h * 0.05));
   }
   for (let h = 0; h < 6; h += 1) readings.push(evapReading('xl', hour(h), hour(h + 1), 0.1));
 
@@ -386,5 +507,5 @@ export function buildDemoDataset(): DemoDataset {
     { id: 'f7', fileName: 'df-large-telemetry.csv', kind: 'inflow', importedAt: '2026-07-15T06:40:00.000Z', readingCount: readings.filter((r) => r.sourceFile === 'df-large-telemetry.csv').length, byteSize: 386_540 },
   ];
 
-  return { reservoirs, zones, stations, curves, rules, readings, files };
+  return { reservoirs, zones, stations, curves, rules, ruleCurves, readings, files };
 }

@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   clearAllData, getFactsByRun, getIndicatorsByRun, getReadingsForCutoff,
   getSnapshot, saveAnnotationFields,
+  getAllRuleCurves, getAllSeries, getSeriesForRun, putRuleCurve, saveCrossingAnalysis,
+  getAllCrossingAnalyses,
 } from '../db';
 import { seedDemoData } from '../services/seedService';
 import { createRun } from '../services/runService';
@@ -12,6 +14,10 @@ import { computeAllIndicators } from './indicators';
 import { replaceFacts, replaceIndicators, saveRun } from '../db';
 import { DEMO_CUTOFF_RUN1, DEMO_CUTOFF_RUN2 } from '../demo/demoData';
 import type { BalanceRun } from '../types';
+import {
+  analyzeScenario, bindingDrift, freezeAnalysisRecord,
+} from './crossings';
+import { persistObservedSeries } from '../services/seriesService';
 
 async function executeLikeWorker(run: BalanceRun) {
   const snapshot = (await getSnapshot(run.id))!;
@@ -164,5 +170,79 @@ describe('端到端：六类验收场景', () => {
     expect(c.annotation.fields['处置理由'].value).toBe('提前预泄');
     expect(c.annotation.fields['风险结论'].value).toBe('待核');
     expect(c.annotation.revision).toBe(3);
+  });
+});
+
+describe('端到端：规则曲线越线分析', () => {
+  it('运行锁定快照冻结预警规则曲线，并保存连续观测序列', async () => {
+    await seedDemoData();
+    const run = await createRun({
+      name: '越线', cutoffAt: DEMO_CUTOFF_RUN2,
+      gridStart: '2026-07-15T00:00:00.000Z', gridEnd: '2026-07-15T06:00:00.000Z',
+      gridStepSeconds: 3600, tolerance: { absM3: 20_000, relFraction: 0.02 },
+      pressureWindowSeconds: 3 * 3600, decisionHorizonSeconds: 3600,
+      reservoirIds: ['qx', 'bs'], design: 'materialized',
+    });
+    const snapshot = (await getSnapshot(run.id))!;
+    expect(snapshot.ruleCurves?.map((r) => r.id)).toContain('rc-qx-lv-orange');
+
+    // 与 Worker 同一路径：指标运行保存水位/流量序列
+    const saved = await persistObservedSeries(snapshot, run.gridStepSeconds);
+    expect(saved).toBeGreaterThan(0);
+    const qxLevel = (await getSeriesForRun(run.id)).find(
+      (s) => s.reservoirId === 'qx' && s.sourceKind === 'water_level',
+    );
+    expect(qxLevel?.points.length).toBe(7);
+    expect((await getAllSeries()).length).toBe(saved);
+
+    // 目录后改不影响快照：撤回橙色规则审批，快照仍保留 approved
+    const orange = (await getAllRuleCurves()).find((r) => r.id === 'rc-qx-lv-orange')!;
+    await putRuleCurve({ ...orange, approvalStatus: 'retired', retiredAt: '2026-07-15T10:00:00.000Z' });
+    const frozen = (await getSnapshot(run.id))!.ruleCurves!.find((r) => r.id === orange.id)!;
+    expect(frozen.approvalStatus).toBe('approved');
+  });
+
+  it('发布冻结记录 → 目录撤回/改点 → 已发布结论不回改，漂移可查', async () => {
+    await seedDemoData();
+    const run = await createRun({
+      name: '冻结', cutoffAt: DEMO_CUTOFF_RUN2,
+      gridStart: '2026-07-15T00:00:00.000Z', gridEnd: '2026-07-15T06:00:00.000Z',
+      gridStepSeconds: 3600, tolerance: { absM3: 20_000, relFraction: 0.02 },
+      pressureWindowSeconds: 3 * 3600, decisionHorizonSeconds: 3600,
+      reservoirIds: ['qx'], design: 'materialized',
+    });
+    const snapshot = (await getSnapshot(run.id))!;
+    await persistObservedSeries(snapshot, run.gridStepSeconds);
+    const series = (await getSeriesForRun(run.id)).find(
+      (s) => s.reservoirId === 'qx' && s.sourceKind === 'water_level',
+    )!;
+    const orange = (await getAllRuleCurves()).find((r) => r.id === 'rc-qx-lv-orange')!;
+    const analysis = analyzeScenario(
+      { label: '橙', mode: 'interpolated', series, rules: [orange] },
+      { margin: 0.1 },
+    );
+    const record = freezeAnalysisRecord({
+      runId: run.id, reservoirId: 'qx', basinId: 'qingxi', series, rules: [orange],
+      mode: 'interpolated', events: analysis.events, issues: analysis.issues,
+      now: '2026-07-15T10:00:00.000Z',
+    });
+    await saveCrossingAnalysis(record);
+    const stored = (await getAllCrossingAnalyses())[0];
+    expect(stored.status).toBe('ok');
+    expect(stored.events[0].firstCrossing?.at).not.toBeNull();
+
+    // 撤回审批并修改曲线点
+    await putRuleCurve({
+      ...orange, approvalStatus: 'retired', retiredAt: '2026-07-15T11:00:00.000Z',
+      curvePoints: orange.curvePoints.map((p) => ({ ...p, threshold: p.threshold + 0.4 })),
+    });
+    const current = await getAllRuleCurves();
+    const drift = bindingDrift(stored, current);
+    expect(drift.length).toBeGreaterThanOrEqual(2);
+    // 已发布记录仍是冻结时的版本与审批状态
+    const reread = (await getAllCrossingAnalyses())[0];
+    expect(reread.ruleBindings[0].approvalStatus).toBe('approved');
+    expect(reread.ruleBindings[0].curvePoints[0].threshold).toBe(106.4);
+    expect(reread.events[0].firstCrossing?.at).toBe(stored.events[0].firstCrossing?.at);
   });
 });
